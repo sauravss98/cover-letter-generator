@@ -7,6 +7,8 @@ export interface ProviderInfo {
 
 export interface GenerateResult {
   cover_letter: string;
+  company: string;
+  role: string;
   provider: string;
   model: string;
 }
@@ -34,7 +36,18 @@ export async function generateLetter(form: FormData, signal?: AbortSignal): Prom
   return res.json();
 }
 
-export async function exportLetter(text: string, format: "pdf" | "docx"): Promise<void> {
+// Characters not allowed in Windows/macOS file names, plus control characters.
+const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
+
+// Builds e.g. "Cover Letter - Acme Corp - Senior Engineer.pdf".
+export function exportFilename(company: string, role: string, format: "pdf" | "docx"): string {
+  const clean = (s: string) => s.replace(UNSAFE_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  const parts = ["Cover Letter", clean(company), clean(role)].filter(Boolean);
+  // Windows rejects names ending in a dot or space.
+  return `${parts.join(" - ").replace(/[. ]+$/, "")}.${format}`;
+}
+
+export async function exportLetter(text: string, format: "pdf" | "docx", filename: string): Promise<void> {
   const res = await fetch("/api/export", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -44,7 +57,7 @@ export async function exportLetter(text: string, format: "pdf" | "docx"): Promis
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = `cover_letter.${format}`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }

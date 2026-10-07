@@ -1,3 +1,6 @@
+import json
+import re
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..extract import SourceDoc
@@ -11,9 +14,43 @@ You will receive the applicant's resume and a job description. Write a cover let
 - Is around 250-400 words, in 3-5 paragraphs, professional and specific rather than generic.
 - Ends with a sign-off using the applicant's name from the resume.
 
-Output only the letter text, starting with the salutation. No subject line, no date or address block, no markdown, no commentary before or after."""
+Output format:
+- The first line is a JSON object naming the hiring company and the job title from the job description, e.g. {"company": "Acme Corp", "role": "Senior Backend Engineer"}. Use an empty string for anything the job description doesn't state.
+- Then one blank line, then the letter text, starting with the salutation.
+No subject line, no date or address block, no markdown, no commentary before or after."""
 
 TASK_PROMPT = "Write the cover letter for this applicant and job."
+
+
+@dataclass
+class LetterResult:
+    letter: str
+    company: str = ""
+    role: str = ""
+
+
+_META_RE = re.compile(r"^\s*(?:```(?:json)?\s*)?(\{[^\n]*\})\s*(?:```)?\s*\n", re.IGNORECASE)
+
+
+def split_metadata(raw: str) -> LetterResult:
+    """Separate the leading {"company", "role"} JSON line from the letter.
+
+    Lenient: if the model skipped or mangled the line, the whole text is the letter
+    and company/role are empty, rather than failing the request.
+    """
+    m = _META_RE.match(raw)
+    if m:
+        try:
+            meta = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            meta = None
+        if isinstance(meta, dict):
+            def field(k: str) -> str:
+                v = meta.get(k)
+                return v.strip()[:100] if isinstance(v, str) else ""
+
+            return LetterResult(letter=raw[m.end():].strip(), company=field("company"), role=field("role"))
+    return LetterResult(letter=raw.strip())
 
 # Per-attempt timeout for provider calls. SDK retries are capped at 1, so worst case is ~2x this.
 REQUEST_TIMEOUT_S = 120

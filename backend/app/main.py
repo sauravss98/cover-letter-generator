@@ -15,6 +15,7 @@ load_dotenv()
 from . import export  # noqa: E402
 from .extract import MAX_DOC_CHARS, MAX_UPLOAD_BYTES, UnsupportedFileError, from_text, from_upload  # noqa: E402
 from .providers import PROVIDERS, ProviderError  # noqa: E402
+from .providers.base import split_metadata  # noqa: E402
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -59,6 +60,8 @@ class ProviderInfo(BaseModel):
 
 class GenerateResponse(BaseModel):
     cover_letter: str
+    company: str  # extracted from the job description; "" if unknown
+    role: str
     provider: str
     model: str
 
@@ -122,13 +125,18 @@ async def generate(
     try:
         # Provider SDK calls block; run them off the event loop so one slow request
         # does not freeze the whole server.
-        letter = await run_in_threadpool(impl.generate, docs, instructions, key, model_id)
+        raw = await run_in_threadpool(impl.generate, docs, instructions, key, model_id)
     except ProviderError as e:
         # Never log the API key; provider/model/message are enough to debug.
         logger.warning("Provider error [%s %s] %s: %s", provider, model_id, e.status_code, e.message)
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
-    return GenerateResponse(cover_letter=letter, provider=provider, model=model_id)
+    result = split_metadata(raw)
+    if not result.letter:
+        raise HTTPException(status_code=502, detail="The model returned an empty letter. Try again.")
+    return GenerateResponse(
+        cover_letter=result.letter, company=result.company, role=result.role, provider=provider, model=model_id
+    )
 
 
 @app.post("/api/export")

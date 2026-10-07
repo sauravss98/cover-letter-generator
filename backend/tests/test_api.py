@@ -58,7 +58,7 @@ def test_generate_with_docx_resume_and_text_jd(fake):
         data={"jd_text": "Senior engineer", "provider": "fake", "api_key": "user-key"},
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"cover_letter": LETTER, "provider": "fake", "model": "fake-1"}
+    assert r.json() == {"cover_letter": LETTER, "company": "", "role": "", "provider": "fake", "model": "fake-1"}
     docs, _, key, model = fake.calls[0]
     assert [d.title for d in docs] == ["resume", "job_description"]
     assert "Ada Lovelace" in docs[0].text
@@ -258,3 +258,45 @@ def test_sdk_error_message_extracts_human_text():
         message = "Error code: 400 - {...}"
 
     assert sdk_error_message(E()) == "Your credit balance is too low."
+
+
+# --- company / role metadata ---
+
+def test_generate_returns_company_and_role(monkeypatch):
+    class MetaProvider(FakeProvider):
+        def generate(self, *args):
+            return '{"company": "Acme Corp", "role": "Senior Engineer"}\n\n' + LETTER
+
+    monkeypatch.setitem(main.PROVIDERS, "meta", MetaProvider())
+    r = client.post(
+        "/api/generate",
+        files={"resume": ("cv.txt", b"Ada", "text/plain")},
+        data={"jd_text": "Role", "provider": "meta", "api_key": "k"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["company"], body["role"], body["cover_letter"]) == ("Acme Corp", "Senior Engineer", LETTER)
+
+
+@pytest.mark.parametrize(
+    "raw, company, role",
+    [
+        ('{"company": "Acme", "role": "Dev"}\n\nDear X,', "Acme", "Dev"),
+        ('```json\n{"company": "Acme", "role": "Dev"}\n```\n\nDear X,', "Acme", "Dev"),
+        ('  {"company": "", "role": "Dev"}\nDear X,', "", "Dev"),
+        ('{"company": 5, "role": null}\n\nDear X,', "", ""),
+    ],
+)
+def test_split_metadata_parses_header(raw, company, role):
+    from app.providers.base import split_metadata
+
+    res = split_metadata(raw)
+    assert (res.company, res.role, res.letter) == (company, role, "Dear X,")
+
+
+@pytest.mark.parametrize("raw", ["Dear X,\n\nBody", "{not json}\n\nDear X,", "{curly opener in letter}"])
+def test_split_metadata_falls_back_to_whole_text(raw):
+    from app.providers.base import split_metadata
+
+    res = split_metadata(raw)
+    assert res.letter == raw.strip() and res.company == "" and res.role == ""

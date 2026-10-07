@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { exportLetter, fetchProviders, generateLetter, type ProviderInfo } from "./api";
+import { exportFilename, exportLetter, fetchProviders, generateLetter, type ProviderInfo } from "./api";
 
 // Keys are stored only in this browser (opt-in) and sent to our backend per request;
 // the backend never persists them.
@@ -47,6 +47,8 @@ export default function App() {
 
   const [letter, setLetter] = useState("");
   const [usedModel, setUsedModel] = useState("");
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -109,6 +111,8 @@ export default function App() {
     try {
       const result = await generateLetter(form, controller.signal);
       setLetter(result.cover_letter);
+      setCompany(result.company);
+      setRole(result.role);
       setUsedModel(`${provider?.name ?? result.provider} · ${result.model}`);
     } catch (err) {
       if (controller.signal.aborted) {
@@ -134,7 +138,7 @@ export default function App() {
   async function onExport(format: "pdf" | "docx") {
     setError("");
     try {
-      await exportLetter(letter, format);
+      await exportLetter(letter, format, exportFilename(company, role, format));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -285,6 +289,17 @@ export default function App() {
           </div>
           <p className="muted small">Edit the text below before downloading.</p>
           <textarea className="letter" rows={20} value={letter} onChange={(e) => setLetter(e.target.value)} />
+          <div className="row">
+            <label>
+              Company
+              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name" />
+            </label>
+            <label>
+              Role
+              <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Job title" />
+            </label>
+          </div>
+          <p className="muted small">Saves as: {exportFilename(company, role, "pdf").slice(0, -".pdf".length)}.pdf / .docx</p>
           <div className="row">
             <button type="button" onClick={() => onExport("pdf")} disabled={!letter.trim()}>
               Download PDF
