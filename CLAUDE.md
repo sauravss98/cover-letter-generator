@@ -12,7 +12,7 @@ Backend (run from `backend/`; the venv lives at `backend/.venv`):
 
 ```bash
 .venv/Scripts/python -m pip install -r requirements.txt
-.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+.venv/Scripts/python -m uvicorn app.main:app --reload --timeout-graceful-shutdown 5 --port 8000
 .venv/Scripts/python -m pytest -q                                                       # all tests
 .venv/Scripts/python -m pytest tests/test_api.py::test_export_docx_keeps_paragraphs -q  # single test
 ```
@@ -47,3 +47,5 @@ There is no frontend test suite. Backend tests never call real LLM APIs: they re
 - Installed SDK majors are new: `anthropic` 1.x, `openai` 3.x (uses the Responses API), `google-genai` 2.x. Check signatures against the installed package rather than older examples.
 - Default model IDs live on each provider class (`default_model`). Users can override the model per request in the UI.
 - Uploads and form fields are untrusted. The limits live as constants at the top of `extract.py` and `main.py`, and each has a test under "security limits" in `tests/test_api.py`. Keep `MODEL_PATTERN` strict: model IDs are interpolated into provider request URLs.
+- Run uvicorn with `--timeout-graceful-shutdown 5` in dev. Without it, `--reload` waits for in-flight LLM requests, so a hung provider call blocks the reload and old code keeps serving requests.
+- Provider SDK calls are blocking: `main.py` runs them via `run_in_threadpool`. Keep it that way, or one slow call freezes the whole server (`test_slow_provider_does_not_block_other_requests` covers this).

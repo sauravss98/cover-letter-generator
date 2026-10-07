@@ -28,8 +28,8 @@ export async function fetchProviders(): Promise<ProviderInfo[]> {
   return res.json();
 }
 
-export async function generateLetter(form: FormData): Promise<GenerateResult> {
-  const res = await fetch("/api/generate", { method: "POST", body: form });
+export async function generateLetter(form: FormData, signal?: AbortSignal): Promise<GenerateResult> {
+  const res = await fetch("/api/generate", { method: "POST", body: form, signal });
   if (!res.ok) throw new Error(await errorMessage(res));
   return res.json();
 }

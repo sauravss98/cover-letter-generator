@@ -16,7 +16,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env      # optional: add server-side default keys
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --timeout-graceful-shutdown 5 --port 8000
 ```
 
 **Frontend** (Node 20+), from `frontend/`:

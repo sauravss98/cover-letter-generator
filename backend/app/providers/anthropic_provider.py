@@ -3,7 +3,18 @@ import base64
 import anthropic
 
 from ..extract import SourceDoc
-from .base import TASK_PROMPT, SYSTEM_PROMPT, ProviderError, require_text, status_error, wrap
+from .base import (
+    MAX_RETRIES,
+    REQUEST_TIMEOUT_S,
+    SYSTEM_PROMPT,
+    TASK_PROMPT,
+    ProviderError,
+    require_text,
+    sdk_error_message,
+    status_error,
+    timeout_error,
+    wrap,
+)
 
 
 _FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
@@ -36,7 +47,7 @@ class AnthropicProvider:
                 {"type": "text", "text": f"Additional instructions from the applicant:\n{instructions.strip()}"}
             )
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_S, max_retries=MAX_RETRIES)
         params = dict(
             model=model,
             max_tokens=16000,
@@ -56,7 +67,9 @@ class AnthropicProvider:
                 # User-chosen older model: send a plain request, since effort/fallbacks may be rejected.
                 response = client.messages.create(**params)
         except anthropic.APIStatusError as e:
-            raise status_error(e.status_code, self.name, e.message)
+            raise status_error(e.status_code, self.name, sdk_error_message(e))
+        except anthropic.APITimeoutError:
+            raise timeout_error(self.name)
         except anthropic.APIConnectionError:
             raise ProviderError(502, "Could not reach the Claude API.")
 

@@ -15,6 +15,26 @@ Output only the letter text, starting with the salutation. No subject line, no d
 
 TASK_PROMPT = "Write the cover letter for this applicant and job."
 
+# Per-attempt timeout for provider calls. SDK retries are capped at 1, so worst case is ~2x this.
+REQUEST_TIMEOUT_S = 120
+MAX_RETRIES = 1
+
+
+def timeout_error(provider: str) -> "ProviderError":
+    return ProviderError(504, f"{provider} took too long to respond. Try again, or pick a faster model.")
+
+
+def sdk_error_message(e: Exception) -> str:
+    """Pull the human-readable message out of an Anthropic/OpenAI SDK error body."""
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+        if body.get("message"):
+            return str(body["message"])
+    return getattr(e, "message", "") or str(e)
+
 
 class ProviderError(RuntimeError):
     """A provider failure normalised to an HTTP status the API layer can return."""
@@ -69,4 +89,4 @@ def status_error(status: int | None, provider: str, detail: str = "") -> Provide
         return ProviderError(429, f"{provider} rate limit or quota exceeded. Try again shortly.")
     if status is not None and 400 <= status < 500:
         return ProviderError(400, f"{provider} rejected the request{suffix}")
-    return ProviderError(502, f"{provider} is unavailable. Try again later.")
+    return ProviderError(502, f"{provider} is unavailable ({status or 'no status'}){suffix}. Try again later.")

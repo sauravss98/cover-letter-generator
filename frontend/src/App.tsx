@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { exportLetter, fetchProviders, generateLetter, type ProviderInfo } from "./api";
 
 // Keys are stored only in this browser (opt-in) and sent to our backend per request;
@@ -23,6 +23,9 @@ function writeStorage(id: string, value: string | null) {
   }
 }
 
+// Slightly above the backend's worst case (2 attempts x 120s) so the server's own timeout error wins.
+const CLIENT_TIMEOUT_MS = 260_000;
+
 const KEY_HELP: Record<string, string> = {
   anthropic: "https://console.anthropic.com/settings/keys",
   openai: "https://platform.openai.com/api-keys",
@@ -46,6 +49,18 @@ export default function App() {
   const [usedModel, setUsedModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [pendingLabel, setPendingLabel] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Tick an elapsed-seconds counter while a generation is in flight.
+  useEffect(() => {
+    if (!loading) return;
+    const started = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [loading]);
 
   useEffect(() => {
     fetchProviders()
@@ -86,15 +101,34 @@ export default function App() {
     if (apiKey.trim()) form.append("api_key", apiKey.trim());
     if (model.trim()) form.append("model", model.trim());
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timer = setTimeout(() => controller.abort("timeout"), CLIENT_TIMEOUT_MS);
+    setPendingLabel(`${provider?.name ?? providerId} · ${model.trim() || provider?.default_model || ""}`);
+
     try {
-      const result = await generateLetter(form);
+      const result = await generateLetter(form, controller.signal);
       setLetter(result.cover_letter);
       setUsedModel(`${provider?.name ?? result.provider} · ${result.model}`);
     } catch (err) {
-      setError((err as Error).message);
+      if (controller.signal.aborted) {
+        setError(
+          controller.signal.reason === "timeout"
+            ? "The request timed out. The provider may be overloaded; try again or pick a faster model."
+            : "Cancelled.",
+        );
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
+      clearTimeout(timer);
+      abortRef.current = null;
       setLoading(false);
     }
+  }
+
+  function onCancel() {
+    abortRef.current?.abort("cancelled");
   }
 
   async function onExport(format: "pdf" | "docx") {
@@ -212,9 +246,33 @@ export default function App() {
           />
         </fieldset>
 
-        <button type="submit" className="primary" disabled={!canSubmit}>
-          {loading ? "Writing your cover letter…" : "Generate cover letter"}
-        </button>
+        {loading ? (
+          <div className="progress" role="status" aria-live="polite">
+            <div className="progress-main">
+              <span className="spinner" aria-hidden="true" />
+              <div>
+                <div>
+                  <strong>Writing your cover letter</strong> <span className="muted">· {elapsed}s</span>
+                </div>
+                <div className="muted small">
+                  {elapsed < 2 ? "Uploading files…" : `Waiting for ${pendingLabel}`}
+                </div>
+                {elapsed >= 30 && (
+                  <div className="muted small">
+                    Still working. Larger models can take a minute or more; it will time out after about 4 minutes.
+                  </div>
+                )}
+              </div>
+            </div>
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button type="submit" className="primary" disabled={!canSubmit}>
+            Generate cover letter
+          </button>
+        )}
       </form>
 
       {error && <div className="error" role="alert">{error}</div>}

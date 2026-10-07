@@ -1,9 +1,11 @@
+import logging
 import os
 import re
 from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -13,6 +15,8 @@ load_dotenv()
 from . import export  # noqa: E402
 from .extract import MAX_DOC_CHARS, MAX_UPLOAD_BYTES, UnsupportedFileError, from_text, from_upload  # noqa: E402
 from .providers import PROVIDERS, ProviderError  # noqa: E402
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Cover Letter Generator")
 app.add_middleware(
@@ -116,8 +120,12 @@ async def generate(
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        letter = impl.generate(docs, instructions, key, model_id)
+        # Provider SDK calls block; run them off the event loop so one slow request
+        # does not freeze the whole server.
+        letter = await run_in_threadpool(impl.generate, docs, instructions, key, model_id)
     except ProviderError as e:
+        # Never log the API key; provider/model/message are enough to debug.
+        logger.warning("Provider error [%s %s] %s: %s", provider, model_id, e.status_code, e.message)
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
     return GenerateResponse(cover_letter=letter, provider=provider, model=model_id)

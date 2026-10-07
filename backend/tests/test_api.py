@@ -201,3 +201,60 @@ def test_rejects_huge_export():
 def test_rejects_oversized_request_by_content_length():
     r = client.post("/api/generate", content=b"x", headers={"content-length": str(26 * 1024 * 1024)})
     assert r.status_code == 413
+
+
+# --- responsiveness ---
+
+@pytest.mark.anyio
+async def test_slow_provider_does_not_block_other_requests(monkeypatch):
+    import time
+
+    import anyio
+    import httpx
+
+    class SlowProvider(FakeProvider):
+        def generate(self, *args):
+            time.sleep(1.5)  # blocking, like a real SDK call
+            return LETTER
+
+    monkeypatch.setitem(main.PROVIDERS, "slow", SlowProvider())
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        health_latency = None
+
+        async def slow_generate():
+            r = await ac.post(
+                "/api/generate",
+                files={"resume": ("cv.txt", b"Ada", "text/plain")},
+                data={"jd_text": "Role", "provider": "slow", "api_key": "k"},
+            )
+            assert r.status_code == 200
+
+        async def health():
+            nonlocal health_latency
+            await anyio.sleep(0.2)  # let generate start first
+            start = time.monotonic()
+            r = await ac.get("/api/health")
+            health_latency = time.monotonic() - start
+            assert r.status_code == 200
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(slow_generate)
+            tg.start_soon(health)
+
+    assert health_latency < 0.5
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def test_sdk_error_message_extracts_human_text():
+    from app.providers.base import sdk_error_message
+
+    class E(Exception):
+        body = {"type": "error", "error": {"type": "invalid_request_error", "message": "Your credit balance is too low."}}
+        message = "Error code: 400 - {...}"
+
+    assert sdk_error_message(E()) == "Your credit balance is too low."
