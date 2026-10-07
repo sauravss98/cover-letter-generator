@@ -144,3 +144,60 @@ def test_export_docx_keeps_paragraphs():
 def test_export_pdf_escapes_markup():
     r = client.post("/api/export", json={"text": "A <b> & C", "format": "pdf"})
     assert r.status_code == 200
+
+
+# --- security limits ---
+
+def _post(fake_files, data):
+    return client.post("/api/generate", files=fake_files, data={"provider": "fake", "api_key": "k", **data})
+
+
+def test_rejects_oversized_upload(fake):
+    big = b"a" * (10 * 1024 * 1024 + 1)
+    r = _post({"resume": ("cv.txt", big, "text/plain")}, {"jd_text": "Role"})
+    assert r.status_code == 400
+    assert "10 MB" in r.json()["detail"]
+
+
+def test_rejects_too_long_extracted_text(fake):
+    r = _post({"resume": ("cv.txt", b"a" * 100_001, "text/plain")}, {"jd_text": "Role"})
+    assert r.status_code == 400
+    assert "too long" in r.json()["detail"]
+
+
+def test_rejects_docx_zip_bomb(fake):
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/document.xml", b"\0" * (60 * 1024 * 1024))
+    r = _post({"resume": ("cv.docx", buf.getvalue(), "application/octet-stream")}, {"jd_text": "Role"})
+    assert r.status_code == 400
+    assert not fake.calls
+
+
+def test_corrupt_files_return_400_not_500(fake):
+    for name in ("cv.pdf", "cv.docx"):
+        r = _post({"resume": (name, b"not really a document", "application/octet-stream")}, {"jd_text": "Role"})
+        assert r.status_code == 400, name
+
+
+@pytest.mark.parametrize("model", ["../../v1/files", "gemini/../x", "a b", "-flag", "x" * 101])
+def test_rejects_unsafe_model_names(fake, model):
+    r = _post({"resume": ("cv.txt", b"Ada", "text/plain")}, {"jd_text": "Role", "model": model})
+    assert r.status_code in (400, 422)
+    assert not fake.calls
+
+
+def test_rejects_long_instructions(fake):
+    r = _post({"resume": ("cv.txt", b"Ada", "text/plain")}, {"jd_text": "Role", "instructions": "x" * 2001})
+    assert r.status_code == 422
+
+
+def test_rejects_huge_export():
+    r = client.post("/api/export", json={"text": "x" * 20_001, "format": "pdf"})
+    assert r.status_code == 422
+
+
+def test_rejects_oversized_request_by_content_length():
+    r = client.post("/api/generate", content=b"x", headers={"content-length": str(26 * 1024 * 1024)})
+    assert r.status_code == 413

@@ -46,3 +46,4 @@ There is no frontend test suite. Backend tests never call real LLM APIs: they re
 
 - Installed SDK majors are new: `anthropic` 1.x, `openai` 3.x (uses the Responses API), `google-genai` 2.x. Check signatures against the installed package rather than older examples.
 - Default model IDs live on each provider class (`default_model`). Users can override the model per request in the UI.
+- Uploads and form fields are untrusted. The limits live as constants at the top of `extract.py` and `main.py`, and each has a test under "security limits" in `tests/test_api.py`. Keep `MODEL_PATTERN` strict: model IDs are interpolated into provider request URLs.
